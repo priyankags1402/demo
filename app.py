@@ -2,31 +2,62 @@ from flask import Flask, request, jsonify
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-import time
 
 app = Flask(__name__)
 
 @app.route("/", methods=["POST"])
-def run_automation():
-    payload = request.get_json()
+def automation():
+    """
+    Expects a JSON payload like:
+    {
+        "url": "https://the-internet.herokuapp.com/login",
+        "actions": [
+            {"type": "send_keys", "by": "id", "locator": "username", "value": "tomsmith"},
+            {"type": "send_keys", "by": "id", "locator": "password", "value": "SuperSecretPassword!"},
+            {"type": "click", "by": "xpath", "locator": '//*[@id="login"]/button'}
+        ],
+        "get_text": {"by": "id", "locator": "flash"}
+    }
+    """
+    data = request.get_json()
 
-    url = payload.get("url")
-    steps = payload.get("xpaths", [])
-
-    if not url or not steps:
-        return jsonify({"status": "FAILED", "error": "url or xpaths missing"}), 400
+    if not data or "url" not in data:
+        return jsonify({"status": "ERROR", "error": "Missing URL in request"}), 400
 
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
 
     driver = webdriver.Chrome(options=options)
 
-    execution_log = []
-
     try:
-        driver.get(url)
-        time.sleep(2)
+        driver.get(data["url"])
 
-        for
+        # Perform actions
+        for action in data.get("actions", []):
+            by = getattr(By, action["by"].upper())
+            element = driver.find_element(by, action["locator"])
+            if action["type"] == "send_keys":
+                element.send_keys(action["value"])
+            elif action["type"] == "click":
+                element.click()
+
+        # Extract text if requested
+        get_text = data.get("get_text")
+        text_result = None
+        if get_text:
+            by = getattr(By, get_text["by"].upper())
+            text_result = driver.find_element(by, get_text["locator"]).text
+
+        return jsonify({"status": "SUCCESS", "message": text_result})
+
+    except Exception as e:
+        return jsonify({"status": "ERROR", "error": str(e)}), 500
+
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
