@@ -2,7 +2,6 @@ from flask import Flask, jsonify
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-# Test Cloud Build trigger
 
 app = Flask(__name__)
 
@@ -34,4 +33,5 @@ def demo():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
+
 
