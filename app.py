@@ -1,12 +1,21 @@
-from flask import Flask, jsonify
+from flask import Flask, request, jsonify
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+import time
 
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def demo():
+@app.route("/", methods=["POST"])
+def run_automation():
+    payload = request.get_json()
+
+    url = payload.get("url")
+    steps = payload.get("xpaths", [])
+
+    if not url or not steps:
+        return jsonify({"status": "FAILED", "error": "url or xpaths missing"}), 400
+
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
@@ -14,28 +23,10 @@ def demo():
 
     driver = webdriver.Chrome(options=options)
 
+    execution_log = []
+
     try:
-        driver.get("https://the-internet.herokuapp.com/login")
+        driver.get(url)
+        time.sleep(2)
 
-        driver.find_element(By.XPATH, '//*[@id="username"]').send_keys("tomsmith")
-        driver.find_element(By.XPATH, '//*[@id="password"]').send_keys("SuperSecretPassword!")
-        driver.find_element(By.XPATH, '//*[@id="login"]/button').click()
-
-        message = driver.find_element(By.XPATH, '//*[@id="flash"]').text
-
-        return jsonify({"status": "SUCCESS", "message": message})
-
-    except Exception as e:
-        return jsonify({"status": "ERROR", "error": str(e)}), 500
-
-    finally:
-        driver.quit()
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
-
-
-
-
-
-
+        for
