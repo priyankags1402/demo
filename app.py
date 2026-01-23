@@ -210,7 +210,7 @@ def login_to_cvp(username, password):
         print("⌨️ Entering credentials")
         driver.find_element(By.ID, "username").send_keys(username)
         driver.find_element(By.ID, "password").send_keys(password)
-        driver.find_element(By.ID, "loginButton").click()
+        driver.find_element(By.XPATH, '//*[@id="login"]/button').click()
 
         time.sleep(3)
         if "dashboard" not in driver.current_url:
@@ -238,4 +238,5 @@ def do_navigation(driver, form_fields):
 if __name__ == "__main__":
     print("🚀 Starting Flask app")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
 
