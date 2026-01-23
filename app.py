@@ -204,7 +204,7 @@ def login_to_cvp(username, password):
 
     try:
         print("🌐 Opening login page")
-        driver.get("https://theinternetheroapp.com/login")
+        driver.get("https://the-internet.herokuapp.com/login")
         time.sleep(2)
 
         print("⌨️ Entering credentials")
@@ -238,3 +238,4 @@ def do_navigation(driver, form_fields):
 if __name__ == "__main__":
     print("🚀 Starting Flask app")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
