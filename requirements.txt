@@ -1,4 +1,5 @@
 flask==2.3.3
+google-cloud-bigquery==3.10.0
+google-cloud-secret-manager==2.17.0
 selenium==4.16.0
-google-cloud-storage
-
+webdriver-manager==3.8.6
