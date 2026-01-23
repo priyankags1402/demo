@@ -170,20 +170,32 @@ def get_password(secret_name):
 # -----------------------------
 def login_to_cvp(username, password):
     chrome_options = Options()
+    chrome_options.binary_location = os.environ.get("CHROME_BIN")
+
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+
+    service = Service(os.environ.get("CHROMEDRIVER_PATH"))
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+
     try:
         driver.get("https://theinternetheroapp.com/login")
         time.sleep(2)
+
         driver.find_element(By.ID, "username").send_keys(username)
         driver.find_element(By.ID, "password").send_keys(password)
         driver.find_element(By.ID, "loginButton").click()
+
         time.sleep(3)
+
         if "dashboard" not in driver.current_url:
             raise Exception("Login failed")
+
         return driver
+
     except Exception as e:
         driver.quit()
         raise e
