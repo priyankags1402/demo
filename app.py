@@ -225,11 +225,11 @@ def login_to_cvp(username, password):
 
 def do_navigation(driver, form_fields):
     print("🧭 Navigating CVP site with input:", form_fields)
-    driver.get("https://theinternetheroapp.com/dashboard")
+    driver.get("https://the-internet.herokuapp.com/dropdown")
     time.sleep(2)
-    start_button = driver.find_element(By.ID, "startProcess")
-    start_button.click()
-    time.sleep(2)
+    #start_button = driver.find_element(By.ID, "startProcess")
+    #start_button.click()
+    #time.sleep(2)
     print("✅ Navigation complete")
 
 # -----------------------------
@@ -238,5 +238,6 @@ def do_navigation(driver, form_fields):
 if __name__ == "__main__":
     print("🚀 Starting Flask app")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
 
 
