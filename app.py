@@ -1,171 +1,203 @@
-from flask import Flask, request, jsonify
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.support.ui import Select, WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-import time
-import tempfile
 import os
+import uuid
+import time
+import base64
+import json
+from flask import Flask, request
+from google.cloud import bigquery, secretmanager
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+
+# -----------------------------
+# Config / clients
+# -----------------------------
+PROJECT_ID = os.environ.get("PROJECT_ID", "wired-coda-483805-b3")
+BQ_DATASET = os.environ.get("BQ_DATASET", "automation")
+BQ_TABLE = os.environ.get("BQ_TABLE", "user_admin")
+
+bq_client = bigquery.Client()
+secret_client = secretmanager.SecretManagerServiceClient()
 
 app = Flask(__name__)
 
-# -------------------------------
-# Selenium Setup
-# -------------------------------
-def create_driver():
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    return webdriver.Chrome(options=options)
-
-
-# -------------------------------
-# Task Implementations
-# -------------------------------
-def task_login(driver):
-    driver.get("https://the-internet.herokuapp.com/login")
-    driver.find_element(By.ID, "username").send_keys("tomsmith")
-    driver.find_element(By.ID, "password").send_keys("SuperSecretPassword!")
-    driver.find_element(By.XPATH, '//*[@id="login"]/button').click()
-    return driver.find_element(By.ID, "flash").text.strip()
-
-
-def task_logout(driver):
-    task_login(driver)
-    driver.find_element(By.XPATH, '//*[@href="/logout"]').click()
-    return "Logged out successfully"
-
-
-def task_checkbox(driver):
-    driver.get("https://the-internet.herokuapp.com/checkboxes")
-    checkbox = driver.find_elements(By.XPATH, "//input[@type='checkbox']")[0]
-    checkbox.click()
-    return "Checkbox clicked"
-
-
-def task_dropdown(driver):
-    driver.get("https://the-internet.herokuapp.com/dropdown")
-    dropdown = Select(driver.find_element(By.ID, "dropdown"))
-    dropdown.select_by_visible_text("Option 2")
-    return "Dropdown Option 2 selected"
-
-
-def task_iframe(driver):
-    driver.get("https://the-internet.herokuapp.com/iframe")
-    driver.switch_to.frame("mce_0_ifr")
-    editor = driver.find_element(By.ID, "tinymce")
-    editor.clear()
-    editor.send_keys("Iframe text entered")
-    driver.switch_to.default_content()
-    return "Iframe text entered"
-
-
-def task_hover(driver):
-    driver.get("https://the-internet.herokuapp.com/hovers")
-    figure = driver.find_element(By.CLASS_NAME, "figure")
-    ActionChains(driver).move_to_element(figure).perform()
-    return "Hover action performed"
-
-
-def task_alert(driver):
-    driver.get("https://the-internet.herokuapp.com/javascript_alerts")
-    driver.find_element(By.XPATH, "//button[text()='Click for JS Alert']").click()
-    alert = driver.switch_to.alert
-    alert.accept()
-    return "Alert accepted"
-
-
-def task_new_window(driver):
-    driver.get("https://the-internet.herokuapp.com/windows")
-    main = driver.current_window_handle
-    driver.find_element(By.LINK_TEXT, "Click Here").click()
-    WebDriverWait(driver, 10).until(EC.number_of_windows_to_be(2))
-    for h in driver.window_handles:
-        if h != main:
-            driver.switch_to.window(h)
-    return f"Switched to window: {driver.title}"
-
-
-def task_upload(driver):
-    driver.get("https://the-internet.herokuapp.com/upload")
-    tmp = tempfile.NamedTemporaryFile(delete=False)
-    tmp.write(b"test upload")
-    tmp.close()
-    driver.find_element(By.ID, "file-upload").send_keys(tmp.name)
-    driver.find_element(By.ID, "file-submit").click()
-    os.unlink(tmp.name)
-    return "File uploaded"
-
-
-def task_dynamic_controls(driver):
-    driver.get("https://the-internet.herokuapp.com/dynamic_controls")
-    driver.find_element(By.XPATH, "//button[text()='Enable']").click()
-    input_box = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, "//input"))
-    )
-    input_box.send_keys("Enabled input")
-    return "Dynamic input enabled and text entered"
-
-
-# -------------------------------
-# Task Router
-# -------------------------------
-TASKS = {
-    "login": task_login,
-    "logout": task_logout,
-    "checkbox": task_checkbox,
-    "dropdown": task_dropdown,
-    "iframe": task_iframe,
-    "hover": task_hover,
-    "alert": task_alert,
-    "new_window": task_new_window,
-    "upload": task_upload,
-    "dynamic_controls": task_dynamic_controls,
-}
-
-
-# -------------------------------
-# API Endpoint
-# -------------------------------
+# -----------------------------
+# Cloud Run / Eventarc endpoint
+# -----------------------------
 @app.route("/", methods=["POST"])
-def run_task():
-    data = request.get_json()
-    task_name = data.get("task_name", "unnamed_task")
-    action = data.get("action")
-
-    if action not in TASKS:
-        return jsonify({
-            "task_name": task_name,
-            "status": "ERROR",
-            "message": f"Unsupported action: {action}"
-        }), 400
-
-    driver = create_driver()
-
+def pubsub_handler():
+    """
+    Eventarc Pub/Sub trigger endpoint
+    """
     try:
-        result = TASKS[action](driver)
-        return jsonify({
-            "task_name": task_name,
-            "action": action,
-            "status": "SUCCESS",
-            "result": result
-        })
+        envelope = request.get_json()
+        if not envelope:
+            print("No JSON payload received")
+            return "Bad Request: No JSON", 400
+
+        # Pub/Sub message is Base64 encoded inside envelope["message"]["data"]
+        pubsub_message = envelope.get("message", {})
+        if "data" not in pubsub_message:
+            print("No data in message")
+            return "Bad Request: Missing data", 400
+
+        input_json = json.loads(base64.b64decode(pubsub_message["data"]).decode("utf-8"))
+        print("Received input JSON:", input_json)
+
+        process_skipcvp(input_json)
+        return "OK", 200
 
     except Exception as e:
-        return jsonify({
-            "task_name": task_name,
-            "action": action,
-            "status": "ERROR",
-            "error": str(e)
-        }), 500
+        print("Error handling message:", str(e))
+        return f"Internal Error: {e}", 500
+
+# -----------------------------
+# Main Processing Logic
+# -----------------------------
+def process_skipcvp(input_json):
+    run_id_internal = str(uuid.uuid4())
+    user = None
+    driver = None
+
+    timestamp_seq = int(time.time() * 1000)
+
+    # Extract caseId, tcId, form fields
+    try:
+        run_input = input_json["inputFormList"][0]
+        case_id = run_input["runId"]
+        tc_id = run_input.get("tcId", "24533")
+        form_fields = {f["placeHolder"]: f["value"] for f in run_input.get("formFields", [])}
+    except Exception as e:
+        print(f"Invalid input JSON: {e}")
+        return
+
+    try:
+        # STEP 1: Lock user
+        if not lock_user(run_id_internal):
+            print("No available user")
+            return
+
+        # STEP 2: Get locked user
+        user = get_locked_user(run_id_internal)
+        if not user:
+            print("No locked user found")
+            return
+
+        username = user["username"]
+        password = get_password(user["secret_name"])
+
+        # STEP 3: Login to CVP (headless)
+        driver = login_to_cvp(username, password)
+
+        # STEP 4: Do automation
+        do_navigation(driver, form_fields)
+
+        print(f"Run {case_id} completed successfully")
+
+    except Exception as e:
+        print(f"Run {case_id} failed: {e}")
 
     finally:
+        # Always release user and quit browser
+        if user:
+            release_user(run_id_internal)
+        if driver:
+            driver.quit()
+
+# -----------------------------
+# BigQuery Functions
+# -----------------------------
+def lock_user(run_id):
+    query = f"""
+    UPDATE `{PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}`
+    SET run_id = @run_id,
+        status = 'LOCKED',
+        last_updated = CURRENT_TIMESTAMP()
+    WHERE user_id = (
+        SELECT user_id
+        FROM `{PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}`
+        WHERE status = 'AVAILABLE'
+          AND run_id IS NULL
+        ORDER BY RAND()
+        LIMIT 1
+    )
+    AND run_id IS NULL
+    """
+    job = bq_client.query(query, job_config=bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
+    ))
+    job.result()
+    return job.num_dml_affected_rows == 1
+
+def get_locked_user(run_id):
+    query = f"""
+    SELECT username, secret_name
+    FROM `{PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}`
+    WHERE run_id = @run_id
+    """
+    job = bq_client.query(query, job_config=bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
+    ))
+    rows = list(job.result())
+    if not rows:
+        return None
+    return {"username": rows[0]["username"], "secret_name": rows[0]["secret_name"]}
+
+def release_user(run_id):
+    query = f"""
+    UPDATE `{PROJECT_ID}.{BQ_DATASET}.{BQ_TABLE}`
+    SET run_id = NULL,
+        status = 'AVAILABLE',
+        last_updated = CURRENT_TIMESTAMP()
+    WHERE run_id = @run_id
+    """
+    bq_client.query(query, job_config=bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
+    )).result()
+
+# -----------------------------
+# Secret Manager
+# -----------------------------
+def get_password(secret_name):
+    secret_path = f"projects/{PROJECT_ID}/secrets/{secret_name}/versions/latest"
+    response = secret_client.access_secret_version(name=secret_path)
+    return response.payload.data.decode("UTF-8")
+
+# -----------------------------
+# Selenium Automation
+# -----------------------------
+def login_to_cvp(username, password):
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    try:
+        driver.get("https://theinternetheroapp.com/login")
+        time.sleep(2)
+        driver.find_element(By.ID, "username").send_keys(username)
+        driver.find_element(By.ID, "password").send_keys(password)
+        driver.find_element(By.ID, "loginButton").click()
+        time.sleep(3)
+        if "dashboard" not in driver.current_url:
+            raise Exception("Login failed")
+        return driver
+    except Exception as e:
         driver.quit()
+        raise e
 
+def do_navigation(driver, form_fields):
+    print("Navigating CVP site with input:", form_fields)
+    driver.get("https://theinternetheroapp.com/dashboard")
+    time.sleep(2)
+    start_button = driver.find_element(By.ID, "startProcess")
+    start_button.click()
+    time.sleep(2)
 
+# -----------------------------
+# Flask entry point for Cloud Run
+# -----------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
