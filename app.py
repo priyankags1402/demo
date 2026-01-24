@@ -60,12 +60,9 @@ def pubsub_handler():
     print(f"🆔 Run ID {run_id} inserted into {RUN_TABLE} with status RUNNING")
 
     # ✅ ACK PUB/SUB IMMEDIATELY
-    response = ("OK", 200)
-
-    # 🚀 Do work AFTER ACK
-    process_skipcvp(input_json, run_id, case_id)
-
-    return response
+    threading.Thread(target=process_skipcvp, args=(input_json, run_id, case_id)).start()
+    print(f"✅ ACK Pub/Sub for Case {case_id}, Run {run_id}", flush=True)
+    return "OK", 200
 
 # -----------------------------
 # Main Processing
@@ -277,3 +274,4 @@ def do_navigation(driver, form_fields):
 if __name__ == "__main__":
     print("🚀 Starting Flask app")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
