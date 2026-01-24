@@ -30,28 +30,34 @@ app = Flask(__name__)
 # -----------------------------
 @app.route("/", methods=["POST"])
 def pubsub_handler():
+    print("🚀 Received Pub/Sub message")
     envelope = request.get_json()
     if not envelope:
+        print("❌ Bad request: empty envelope")
         return "Bad Request", 400
 
     pubsub_message = envelope.get("message", {})
     if "data" not in pubsub_message:
+        print("❌ Bad request: missing data")
         return "Bad Request", 400
 
     input_json = json.loads(
         base64.b64decode(pubsub_message["data"]).decode("utf-8")
     )
+    print("📥 Decoded input JSON:", input_json)
 
     run_input = input_json["inputFormList"][0]
     case_id = run_input["runId"]
+    print(f"🔹 Case ID: {case_id}")
 
-    # 🔒 CASE IDEMPOTENCY (prevents loop)
+    # 🔒 CASE IDEMPOTENCY
     if case_already_processed(case_id):
         print(f"🔁 Case {case_id} already processed — skipping")
         return "OK", 200
 
     run_id = str(uuid.uuid4())
     insert_run_item(run_id, case_id, "RUNNING")
+    print(f"🆔 Run ID {run_id} inserted into {RUN_TABLE} with status RUNNING")
 
     # ✅ ACK PUB/SUB IMMEDIATELY
     response = ("OK", 200)
@@ -65,36 +71,48 @@ def pubsub_handler():
 # Main Processing
 # -----------------------------
 def process_skipcvp(input_json, run_id, case_id):
+    print(f"🔹 Starting processing for Case ID {case_id}, Run ID {run_id}")
     user = None
     driver = None
 
     try:
         run_input = input_json["inputFormList"][0]
-        form_fields = {
-            f["placeHolder"]: f["value"]
-            for f in run_input.get("formFields", [])
-        }
+        form_fields = {f["placeHolder"]: f["value"] for f in run_input.get("formFields", [])}
+        print("📄 Form fields to fill:", form_fields)
 
+        print("🔒 Attempting to lock a user")
         if not lock_user(run_id):
             raise Exception("No available user")
+        print("✅ User locked successfully")
 
         user = get_locked_user(run_id)
-        password = get_password(user["secret_name"])
+        print(f"👤 Locked user: {user['username']}")
 
+        password = get_password(user["secret_name"])
+        print("🔑 Password retrieved from Secret Manager")
+
+        print(f"🌐 Logging in to CVP as {user['username']}")
         driver = login_to_cvp(user["username"], password)
+        print("✅ Login successful")
+
+        print("🔹 Performing navigation / automation")
         do_navigation(driver, form_fields)
+        print(f"✅ Case {case_id} processed successfully")
 
         update_run_item(run_id, "SUCCESS", "")
+        print(f"📝 Updated run status to SUCCESS for Run ID {run_id}")
 
     except Exception as e:
-        print(f"❌ Run failed: {e}")
+        print(f"❌ Run {run_id} failed: {e}")
         update_run_item(run_id, "FAILED", str(e))
 
     finally:
         if driver:
+            print("🚪 Quitting browser")
             driver.quit()
             del driver
         if user:
+            print("🔄 Releasing user")
             release_user(run_id)
 
 # -----------------------------
@@ -116,7 +134,9 @@ def case_already_processed(case_id):
             ]
         )
     )
-    return any(job.result())
+    processed = any(job.result())
+    print(f"🔍 Case {case_id} already processed? {processed}")
+    return processed
 
 def insert_run_item(run_id, case_id, status):
     query = f"""
@@ -134,6 +154,7 @@ def insert_run_item(run_id, case_id, status):
             ]
         ),
     ).result()
+    print(f"💾 Inserted Run ID {run_id} for Case {case_id} with status {status}")
 
 def update_run_item(run_id, status, error_message):
     query = f"""
@@ -153,6 +174,7 @@ def update_run_item(run_id, status, error_message):
             ]
         ),
     ).result()
+    print(f"💾 Updated Run ID {run_id} to status {status}")
 
 def lock_user(run_id):
     query = f"""
@@ -168,12 +190,11 @@ def lock_user(run_id):
     job = bq_client.query(
         query,
         job_config=bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("run_id", "STRING", run_id)
-            ]
+            query_parameters=[bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
         ),
     )
     job.result()
+    print(f"🔒 Attempted to lock a user for Run ID {run_id}")
     return job.num_dml_affected_rows == 1
 
 def get_locked_user(run_id):
@@ -186,9 +207,7 @@ def get_locked_user(run_id):
         bq_client.query(
             query,
             job_config=bigquery.QueryJobConfig(
-                query_parameters=[
-                    bigquery.ScalarQueryParameter("run_id", "STRING", run_id)
-                ]
+                query_parameters=[bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
             ),
         ).result()
     )
@@ -203,25 +222,25 @@ def release_user(run_id):
     bq_client.query(
         query,
         job_config=bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("run_id", "STRING", run_id)
-            ]
+            query_parameters=[bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
         ),
     ).result()
+    print(f"🔓 Released user for Run ID {run_id}")
 
 # -----------------------------
 # Secret Manager
 # -----------------------------
 def get_password(secret_name):
     path = f"projects/{PROJECT_ID}/secrets/{secret_name}/versions/latest"
-    return secret_client.access_secret_version(
-        name=path
-    ).payload.data.decode("UTF-8")
+    password = secret_client.access_secret_version(name=path).payload.data.decode("UTF-8")
+    print(f"🔑 Retrieved secret for {secret_name}")
+    return password
 
 # -----------------------------
 # Selenium
 # -----------------------------
 def login_to_cvp(username, password):
+    print(f"🌐 Logging in as {username}")
     options = Options()
     options.binary_location = os.environ["CHROME_BIN"]
     options.add_argument("--headless=new")
@@ -241,17 +260,20 @@ def login_to_cvp(username, password):
     WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.XPATH, "//a[@href='/logout']"))
     )
-
+    print("✅ Login successful")
     return driver
 
 def do_navigation(driver, form_fields):
+    print("🔹 Performing navigation / form automation")
     driver.get("https://the-internet.herokuapp.com/dropdown")
     WebDriverWait(driver, 5).until(
         EC.presence_of_element_located((By.ID, "dropdown"))
     )
+    print("✅ Navigation complete")
 
 # -----------------------------
 # Entry
 # -----------------------------
 if __name__ == "__main__":
+    print("🚀 Starting Flask app")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
