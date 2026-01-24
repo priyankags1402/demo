@@ -21,8 +21,8 @@ BQ_DATASET = os.environ.get("BQ_DATASET", "automation")
 USER_TABLE = os.environ.get("USER_TABLE", "user_admin")
 RUN_TABLE = os.environ.get("RUN_TABLE", "run_items")
 REGION = os.environ.get("REGION", "us-central1")
-QUEUE_NAME = os.environ.get("TASK_QUEUE", "skipcvp-queue")
-TASK_HANDLER_URL = os.environ.get("TASK_HANDLER_URL")
+QUEUE_NAME = os.environ.get("TASK_QUEUE", "automation-queue")
+TASK_HANDLER_URL = os.environ.get("TASK_HANDLER_URL","https://automation-27851544936.europe-west1.run.app")
 
 bq_client = bigquery.Client()
 secret_client = secretmanager.SecretManagerServiceClient()
@@ -237,3 +237,4 @@ def do_navigation(driver, form_fields):
 # -----------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
