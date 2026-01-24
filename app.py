@@ -36,24 +36,33 @@ app = Flask(__name__)
 @app.route("/", methods=["POST"])
 def pubsub_handler():
     print("🔥 Pub/Sub received")
+
     envelope = request.get_json()
-    if not envelope or "message" not in envelope:
-        return "Bad Request", 400
+    if not envelope:
+        return "Bad Request: Empty body", 400
 
-    pubsub_message = envelope["message"]
-    data = pubsub_message.get("data")
-    if not data:
-        return "Bad Request: No data", 400
+    # Check if it is a real Pub/Sub message
+    if "message" in envelope:
+        pubsub_message = envelope["message"]
+        data = pubsub_message.get("data")
+        if not data:
+            return "Bad Request: No data in Pub/Sub message", 400
+        try:
+            input_json = json.loads(base64.b64decode(data).decode("utf-8"))
+        except Exception as e:
+            return f"Bad Request: Failed to decode Pub/Sub message: {e}", 400
+    else:
+        # Otherwise, assume raw JSON was sent directly
+        input_json = envelope
 
-    input_json = json.loads(base64.b64decode(data).decode("utf-8"))
+    # Extract IDs
     run_id = str(uuid.uuid4())
-    case_id = input_json["inputFormList"][0]["runId"]
+    case_id = input_json.get("inputFormList", [{}])[0].get("runId", "UNKNOWN")
 
     print(f"📥 Case {case_id} received. Enqueuing Cloud Task...")
     create_task(input_json, run_id, case_id)
 
     return "OK", 200
-
 def create_task(input_json, run_id, case_id):
     parent = tasks_client.queue_path(PROJECT_ID, REGION, QUEUE_NAME)
     task_payload = {
@@ -237,4 +246,5 @@ def do_navigation(driver, form_fields):
 # -----------------------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
 
