@@ -154,12 +154,14 @@ def get_password(secret_name):
 # -----------------------------
 def login_to_cvp(username, password):
     chrome_options = Options()
-    chrome_options.binary_location = os.environ.get("CHROME_BIN")
-    chrome_options.add_argument("--headless=new")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--headless=new")  # New headless mode
+    chrome_options.add_argument("--no-sandbox")    # Required in containers
+    chrome_options.add_argument("--disable-dev-shm-usage")  # Prevent /dev/shm issues
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--remote-debugging-port=9222")  # DevTools port
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-software-rasterizer")
 
     service = Service(os.environ.get("CHROMEDRIVER_PATH"))
     driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -274,3 +276,4 @@ def pubsub_handler():
 if __name__ == "__main__":
     print("🚀 Starting Flask app")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
