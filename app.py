@@ -11,6 +11,8 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import threading
+
 
 # -----------------------------
 # Config
@@ -274,4 +276,5 @@ def do_navigation(driver, form_fields):
 if __name__ == "__main__":
     print("🚀 Starting Flask app")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
 
