@@ -27,44 +27,48 @@ secret_client = secretmanager.SecretManagerServiceClient()
 app = Flask(__name__)
 
 # -----------------------------
-# Helper: Check if run exists
+# Run table helpers
 # -----------------------------
-def run_exists(run_id):
+def run_already_processed(case_id):
     query = f"""
-    SELECT COUNT(*) as cnt
+    SELECT COUNT(*) AS cnt
     FROM `{PROJECT_ID}.{BQ_DATASET}.{RUN_TABLE}`
-    WHERE run_id=@run_id
+    WHERE case_id=@case_id AND status='SUCCESS'
     """
     rows = list(bq_client.query(
         query,
         job_config=bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
+            query_parameters=[bigquery.ScalarQueryParameter("case_id", "STRING", case_id)]
         )
     ).result())
     return rows[0]["cnt"] > 0
 
-# -----------------------------
-# Insert run item
-# -----------------------------
-def insert_run_item(run_id):
-    if run_exists(run_id):
-        print(f"⚠️ Run {run_id} already exists. Skipping insert.")
-        return
+def any_run_running():
     query = f"""
-    INSERT INTO `{PROJECT_ID}.{BQ_DATASET}.{RUN_TABLE}` (run_id)
-    VALUES (@run_id)
+    SELECT COUNT(*) AS cnt
+    FROM `{PROJECT_ID}.{BQ_DATASET}.{RUN_TABLE}`
+    WHERE status='RUNNING'
+    """
+    rows = list(bq_client.query(query).result())
+    return rows[0]["cnt"] > 0
+
+def insert_run_item(run_id, case_id, status="RUNNING"):
+    query = f"""
+    INSERT INTO `{PROJECT_ID}.{BQ_DATASET}.{RUN_TABLE}` (run_id, case_id, status)
+    VALUES (@run_id, @case_id, @status)
     """
     bq_client.query(
         query,
         job_config=bigquery.QueryJobConfig(
-            query_parameters=[bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
+            query_parameters=[
+                bigquery.ScalarQueryParameter("run_id", "STRING", run_id),
+                bigquery.ScalarQueryParameter("case_id", "STRING", case_id),
+                bigquery.ScalarQueryParameter("status", "STRING", status)
+            ]
         )
     ).result()
-    print(f"✅ Inserted Run ID {run_id} into {RUN_TABLE}")
+    print(f"✅ Inserted run {run_id} for case {case_id} with status {status}")
 
-# -----------------------------
-# Update run status
-# -----------------------------
 def update_run_item(run_id, status, error_message=""):
     query = f"""
     UPDATE `{PROJECT_ID}.{BQ_DATASET}.{RUN_TABLE}`
@@ -81,10 +85,10 @@ def update_run_item(run_id, status, error_message=""):
             ]
         )
     ).result()
-    print(f"✅ Updated Run ID {run_id} status to {status}")
+    print(f"✅ Updated run {run_id} status to {status}")
 
 # -----------------------------
-# Lock / unlock user
+# User helpers
 # -----------------------------
 def lock_user(run_id):
     query = f"""
@@ -135,7 +139,7 @@ def release_user(run_id):
             query_parameters=[bigquery.ScalarQueryParameter("run_id", "STRING", run_id)]
         )
     ).result()
-    print(f"🔓 Released user for Run ID {run_id}")
+    print(f"🔓 Released user for run {run_id}")
 
 # -----------------------------
 # Secret Manager
@@ -146,7 +150,7 @@ def get_password(secret_name):
     return response.payload.data.decode("UTF-8")
 
 # -----------------------------
-# Selenium Automation
+# Selenium automation
 # -----------------------------
 def login_to_cvp(username, password):
     chrome_options = Options()
@@ -182,15 +186,13 @@ def do_navigation(driver, form_fields):
     print(f"✅ Navigation complete with fields: {form_fields}")
 
 # -----------------------------
-# Main processing logic
+# Main processing
 # -----------------------------
-def process_skipcvp(input_json, run_id):
+def process_skipcvp(input_json, run_id, case_id):
     user = None
     driver = None
-
     try:
         run_input = input_json["inputFormList"][0]
-        case_id = run_input.get("runId", "UNKNOWN")
         form_fields = {f["placeHolder"]: f["value"] for f in run_input.get("formFields", [])}
         print(f"📄 Case ID: {case_id}, Form fields: {form_fields}")
 
@@ -229,7 +231,7 @@ def process_skipcvp(input_json, run_id):
             print("🚪 Browser quit")
 
 # -----------------------------
-# Flask entry point
+# Flask endpoint
 # -----------------------------
 @app.route("/", methods=["POST"])
 def pubsub_handler():
@@ -244,13 +246,23 @@ def pubsub_handler():
             return "Bad Request: Missing Pub/Sub data", 400
 
         input_json = json.loads(base64.b64decode(pubsub_message["data"]).decode("utf-8"))
-        run_id = input_json["inputFormList"][0].get("runId", str(uuid.uuid4()))
+        case_id = input_json["inputFormList"][0].get("runId", "UNKNOWN")
 
-        # Insert run in BQ
-        insert_run_item(run_id)
+        # Idempotency check
+        if run_already_processed(case_id):
+            print(f"⚠️ Case {case_id} already processed, skipping.")
+            return "OK", 200
 
-        # Process asynchronously in a thread
-        Thread(target=process_skipcvp, args=(input_json, run_id)).start()
+        # Sequential check: only 1 run at a time
+        if any_run_running():
+            print("⚠️ Another run is in progress, skipping.")
+            return "OK", 200
+
+        run_id = str(uuid.uuid4())  # internal automation run ID
+        insert_run_item(run_id, case_id, status="RUNNING")
+
+        # Process asynchronously
+        Thread(target=process_skipcvp, args=(input_json, run_id, case_id)).start()
 
         print("✅ Returning 200 OK to Pub/Sub")
         return "OK", 200
