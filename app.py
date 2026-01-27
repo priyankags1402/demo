@@ -236,7 +236,7 @@ def process_skipcvp(input_json, run_id, case_id):
             for f in run_input.get("formFields", [])
         }
 
-        print(f"📄 Processing case_id={case_id}")
+        print(f" Processing case_id={case_id}")
 
         # Lock an available user
         if not lock_user(run_id):
@@ -311,7 +311,7 @@ def pubsub_handler():
     run_id = str(uuid.uuid4())
     insert_run_item(run_id, case_id)
 
-    # IMPORTANT: NO THREADS (Cloud Run safe)
+   
     process_skipcvp(input_json, run_id, case_id)
 
     return "OK", 200
@@ -319,4 +319,5 @@ def pubsub_handler():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
 
