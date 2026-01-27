@@ -74,7 +74,7 @@ def insert_run_item(run_id, case_id, status="RUNNING"):
             ]
         ),
     ).result()
-    print(f"✅ Run inserted | run_id={run_id}, case_id={case_id}")
+    print(f" Run inserted | run_id={run_id}, case_id={case_id}")
 
 
 def update_run_item(run_id, status, error_message=""):
@@ -95,7 +95,7 @@ def update_run_item(run_id, status, error_message=""):
             ]
         ),
     ).result()
-    print(f"✅ Run updated | run_id={run_id}, status={status}")
+    print(f" Run updated | run_id={run_id}, status={status}")
 
 
 # -----------------------------
@@ -169,7 +169,7 @@ def release_user(run_id):
             ]
         ),
     ).result()
-    print(f"🔓 User released | run_id={run_id}")
+    print(f" User released | run_id={run_id}")
 
 
 # -----------------------------
@@ -212,14 +212,14 @@ def login_to_cvp(username, password):
         EC.presence_of_element_located((By.XPATH, "//a[@href='/logout']"))
     )
 
-    print(f"✅ Logged in as {username}")
+    print(f" Logged in as {username}")
     return driver
 
 
 def do_navigation(driver, form_fields):
     driver.get("https://the-internet.herokuapp.com/dropdown")
     time.sleep(2)
-    print(f"✅ Navigation done | fields={form_fields}")
+    print(f"Navigation done | fields={form_fields}")
 
 
 # -----------------------------
@@ -238,6 +238,7 @@ def process_skipcvp(input_json, run_id, case_id):
 
         print(f"📄 Processing case_id={case_id}")
 
+        # Lock an available user
         if not lock_user(run_id):
             raise Exception("No available user")
 
@@ -247,29 +248,41 @@ def process_skipcvp(input_json, run_id, case_id):
 
         password = get_password(user["secret_name"])
 
+        # Login via Selenium
         driver = login_to_cvp(user["username"], password)
         do_navigation(driver, form_fields)
 
+        # Mark the run as successful
         update_run_item(run_id, "SUCCESS")
-        print(f"✅ Case completed | case_id={case_id}")
+        print(f" Case completed | case_id={case_id}")
 
     except Exception as e:
-        print(f"❌ Run failed | {e}")
+        print(f" Run failed | {e}")
         update_run_item(run_id, "FAILED", str(e))
 
     finally:
+        # Attempt to log out if logged in
         if driver:
-            driver.quit()
+            try:
+                logout_btn = driver.find_elements(By.XPATH, "//a[@href='/logout']")
+                if logout_btn:
+                    logout_btn[0].click()
+                    print(" Logged out successfully")
+            except Exception as e:
+                print(f" Logout failed: {e}")
+            finally:
+                driver.quit()
+                print(" Browser closed")
+
+        # Release the user lock
         if user:
             release_user(run_id)
-
-
 # -----------------------------
 # Pub/Sub endpoint
 # -----------------------------
 @app.route("/", methods=["POST"])
 def pubsub_handler():
-    print("🔥 Pub/Sub message received")
+    print(" Pub/Sub message received")
 
     envelope = request.get_json()
     if not envelope:
@@ -287,12 +300,12 @@ def pubsub_handler():
 
     # Idempotency
     if run_already_processed(case_id):
-        print(f"⚠️ Case already processed | {case_id}")
+        print(f" Case already processed | {case_id}")
         return "OK", 200
 
     # Sequential processing
     if any_run_running():
-        print("⚠️ Another run in progress")
+        print(" Another run in progress")
         return "OK", 200
 
     run_id = str(uuid.uuid4())
@@ -306,3 +319,4 @@ def pubsub_handler():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
